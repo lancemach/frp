@@ -34,19 +34,27 @@ const (
 <head>
 <title>Not Found</title>
 <style>
-    body {
-        width: 35em;
-        margin: 0 auto;
-        font-family: Tahoma, Verdana, Arial, sans-serif;
-    }
+body{margin:0;padding:0;font-size:12px;line-height:22px;font-family:tahoma, arial, 'Hiragino Sans GB', "Microsoft YaHei", "黑体", sans-serif;-webkit-text-size-adjust:none;}
+html,body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,h6,pre,form,fieldset,input,textarea,p,blockquote,th,td,p{margin:0;padding:0;}
+body,html,.wo-404-wrap{ width: 100%; height: 100% }
+div{webkit-box-sizing: border-box; -moz-box-sizing: border-box;box-sizing: border-box;}
+.wo-404-wrap{ background:url('https://images-resource-1256738796.cos.ap-chengdu.myqcloud.com/public/404.jpg') no-repeat 50% 58% ;}
+.wo-404-wrap .text{padding:8% 20% 30px;text-align: center; width: 100%}
+.wo-404-wrap .text p{font-size: 14px;}
+.wo-404-wrap .text p a,.wo-404-wrap .text p em{color: #269DFF;margin: 0 4px;}
+.wo-404-wrap .text p em{font-style: normal;color: #E40008}
+.wo-404-wrap .text h3{font-size: 16px;font-weight: 400;color: #808080}
+@media (max-width: 970px) {
+.wo-404-wrap{ background-size:100%; }.wo-404-wrap .text{padding:18% 8%}
+}
 </style>
 </head>
 <body>
-<h1>The page you requested was not found.</h1>
-<p>Sorry, the page you are looking for is currently unavailable.<br/>
-Please try again later.</p>
-<p>The server is powered by <a href="https://github.com/fatedier/frp">frp</a>.</p>
-<p><em>Faithfully yours, frp.</em></p>
+<div class="wo-404-wrap">
+<div class="text">
+<h3>对不起！亲，您要访问的页面连接错误或者不存在，我们正在努力修复!</h3>
+</div>
+</div>
 </body>
 </html>
 `
