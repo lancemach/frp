@@ -12,66 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !frps
+
 package plugin
 
 import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	stdlog "log"
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"strings"
+	"time"
 
+	"github.com/fatedier/golib/pool"
+
+	v1 "github.com/fatedier/frp/pkg/config/v1"
 	"github.com/fatedier/frp/pkg/transport"
-	frpNet "github.com/fatedier/frp/pkg/util/net"
+	"github.com/fatedier/frp/pkg/util/log"
+	netpkg "github.com/fatedier/frp/pkg/util/net"
 )
 
-const PluginHTTPS2HTTPS = "https2https"
-
 func init() {
-	Register(PluginHTTPS2HTTPS, NewHTTPS2HTTPSPlugin)
+	Register(v1.PluginHTTPS2HTTPS, NewHTTPS2HTTPSPlugin)
 }
 
 type HTTPS2HTTPSPlugin struct {
-	crtPath           string
-	keyPath           string
-	hostHeaderRewrite string
-	localAddr         string
-	headers           map[string]string
+	opts *v1.HTTPS2HTTPSPluginOptions
 
 	l *Listener
 	s *http.Server
 }
 
-func NewHTTPS2HTTPSPlugin(params map[string]string) (Plugin, error) {
-	crtPath := params["plugin_crt_path"]
-	keyPath := params["plugin_key_path"]
-	localAddr := params["plugin_local_addr"]
-	hostHeaderRewrite := params["plugin_host_header_rewrite"]
-	headers := make(map[string]string)
-	for k, v := range params {
-		if !strings.HasPrefix(k, "plugin_header_") {
-			continue
-		}
-		if k = strings.TrimPrefix(k, "plugin_header_"); k != "" {
-			headers[k] = v
-		}
-	}
-
-	if localAddr == "" {
-		return nil, fmt.Errorf("plugin_local_addr is required")
-	}
+func NewHTTPS2HTTPSPlugin(options v1.ClientPluginOptions) (Plugin, error) {
+	opts := options.(*v1.HTTPS2HTTPSPluginOptions)
 
 	listener := NewProxyListener()
 
 	p := &HTTPS2HTTPSPlugin{
-		crtPath:           crtPath,
-		keyPath:           keyPath,
-		localAddr:         localAddr,
-		hostHeaderRewrite: hostHeaderRewrite,
-		headers:           headers,
-		l:                 listener,
+		opts: opts,
+		l:    listener,
 	}
 
 	tr := &http.Transport{
@@ -79,28 +60,34 @@ func NewHTTPS2HTTPSPlugin(params map[string]string) (Plugin, error) {
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
+		Rewrite: func(r *httputil.ProxyRequest) {
+			r.Out.Header["X-Forwarded-For"] = r.In.Header["X-Forwarded-For"]
+			r.SetXForwarded()
+			req := r.Out
 			req.URL.Scheme = "https"
-			req.URL.Host = p.localAddr
-			if p.hostHeaderRewrite != "" {
-				req.Host = p.hostHeaderRewrite
+			req.URL.Host = p.opts.LocalAddr
+			if p.opts.HostHeaderRewrite != "" {
+				req.Host = p.opts.HostHeaderRewrite
 			}
-			for k, v := range p.headers {
+			for k, v := range p.opts.RequestHeaders.Set {
 				req.Header.Set(k, v)
 			}
 		},
-		Transport: tr,
+		Transport:  tr,
+		BufferPool: pool.NewBuffer(32 * 1024),
+		ErrorLog:   stdlog.New(log.NewWriteLogger(log.WarnLevel, 2), "", 0),
 	}
 
 	p.s = &http.Server{
-		Handler: rp,
+		Handler:           rp,
+		ReadHeaderTimeout: 60 * time.Second,
 	}
 
 	var (
 		tlsConfig *tls.Config
 		err       error
 	)
-	if crtPath != "" || keyPath != "" {
+	if opts.CrtPath != "" || opts.KeyPath != "" {
 		tlsConfig, err = p.genTLSConfig()
 	} else {
 		tlsConfig, err = transport.NewServerTLSConfig("", "", "")
@@ -111,12 +98,14 @@ func NewHTTPS2HTTPSPlugin(params map[string]string) (Plugin, error) {
 	}
 	ln := tls.NewListener(listener, tlsConfig)
 
-	go p.s.Serve(ln)
+	go func() {
+		_ = p.s.Serve(ln)
+	}()
 	return p, nil
 }
 
 func (p *HTTPS2HTTPSPlugin) genTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(p.crtPath, p.keyPath)
+	cert, err := tls.LoadX509KeyPair(p.opts.CrtPath, p.opts.KeyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -125,18 +114,18 @@ func (p *HTTPS2HTTPSPlugin) genTLSConfig() (*tls.Config, error) {
 	return config, nil
 }
 
-func (p *HTTPS2HTTPSPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extraBufToLocal []byte) {
-	wrapConn := frpNet.WrapReadWriteCloserToConn(conn, realConn)
-	p.l.PutConn(wrapConn)
+func (p *HTTPS2HTTPSPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extra *ExtraInfo) {
+	wrapConn := netpkg.WrapReadWriteCloserToConn(conn, realConn)
+	if extra.SrcAddr != nil {
+		wrapConn.SetRemoteAddr(extra.SrcAddr)
+	}
+	_ = p.l.PutConn(wrapConn)
 }
 
 func (p *HTTPS2HTTPSPlugin) Name() string {
-	return PluginHTTPS2HTTPS
+	return v1.PluginHTTPS2HTTPS
 }
 
 func (p *HTTPS2HTTPSPlugin) Close() error {
-	if err := p.s.Close(); err != nil {
-		return err
-	}
-	return nil
+	return p.s.Close()
 }
