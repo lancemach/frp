@@ -1,4 +1,4 @@
-// Copyright 2019 fatedier, fatedier@gmail.com
+// Copyright 2024 The frp Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,52 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !frps
-
 package plugin
 
 import (
-	"crypto/tls"
-	"fmt"
 	"io"
 	stdlog "log"
 	"net"
 	"net/http"
 	"net/http/httputil"
-	"time"
 
 	"github.com/fatedier/golib/pool"
 
 	v1 "github.com/fatedier/frp/pkg/config/v1"
-	"github.com/fatedier/frp/pkg/transport"
 	"github.com/fatedier/frp/pkg/util/log"
 	netpkg "github.com/fatedier/frp/pkg/util/net"
 )
 
 func init() {
-	Register(v1.PluginHTTPS2HTTP, NewHTTPS2HTTPPlugin)
+	Register(v1.PluginHTTP2HTTP, NewHTTP2HTTPPlugin)
 }
 
-type HTTPS2HTTPPlugin struct {
-	opts *v1.HTTPS2HTTPPluginOptions
+type HTTP2HTTPPlugin struct {
+	opts *v1.HTTP2HTTPPluginOptions
 
 	l *Listener
 	s *http.Server
 }
 
-func NewHTTPS2HTTPPlugin(options v1.ClientPluginOptions) (Plugin, error) {
-	opts := options.(*v1.HTTPS2HTTPPluginOptions)
+func NewHTTP2HTTPPlugin(options v1.ClientPluginOptions) (Plugin, error) {
+	opts := options.(*v1.HTTP2HTTPPluginOptions)
+
 	listener := NewProxyListener()
 
-	p := &HTTPS2HTTPPlugin{
+	p := &HTTP2HTTPPlugin{
 		opts: opts,
 		l:    listener,
 	}
 
 	rp := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
-			r.Out.Header["X-Forwarded-For"] = r.In.Header["X-Forwarded-For"]
-			r.SetXForwarded()
 			req := r.Out
 			req.URL.Scheme = "http"
 			req.URL.Host = p.opts.LocalAddr
@@ -72,54 +65,27 @@ func NewHTTPS2HTTPPlugin(options v1.ClientPluginOptions) (Plugin, error) {
 		ErrorLog:   stdlog.New(log.NewWriteLogger(log.WarnLevel, 2), "", 0),
 	}
 
-	var (
-		tlsConfig *tls.Config
-		err       error
-	)
-	if opts.CrtPath != "" || opts.KeyPath != "" {
-		tlsConfig, err = p.genTLSConfig()
-	} else {
-		tlsConfig, err = transport.NewServerTLSConfig("", "", "")
-		tlsConfig.InsecureSkipVerify = true
-	}
-	if err != nil {
-		return nil, fmt.Errorf("gen TLS config error: %v", err)
-	}
-
 	p.s = &http.Server{
 		Handler:           rp,
-		ReadHeaderTimeout: 60 * time.Second,
-		TLSConfig:         tlsConfig,
+		ReadHeaderTimeout: 0,
 	}
 
 	go func() {
-		_ = p.s.ServeTLS(listener, "", "")
+		_ = p.s.Serve(listener)
 	}()
+
 	return p, nil
 }
 
-func (p *HTTPS2HTTPPlugin) genTLSConfig() (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(p.opts.CrtPath, p.opts.KeyPath)
-	if err != nil {
-		return nil, err
-	}
-
-	config := &tls.Config{Certificates: []tls.Certificate{cert}}
-	return config, nil
-}
-
-func (p *HTTPS2HTTPPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, extra *ExtraInfo) {
+func (p *HTTP2HTTPPlugin) Handle(conn io.ReadWriteCloser, realConn net.Conn, _ *ExtraInfo) {
 	wrapConn := netpkg.WrapReadWriteCloserToConn(conn, realConn)
-	if extra.SrcAddr != nil {
-		wrapConn.SetRemoteAddr(extra.SrcAddr)
-	}
 	_ = p.l.PutConn(wrapConn)
 }
 
-func (p *HTTPS2HTTPPlugin) Name() string {
-	return v1.PluginHTTPS2HTTP
+func (p *HTTP2HTTPPlugin) Name() string {
+	return v1.PluginHTTP2HTTP
 }
 
-func (p *HTTPS2HTTPPlugin) Close() error {
+func (p *HTTP2HTTPPlugin) Close() error {
 	return p.s.Close()
 }
